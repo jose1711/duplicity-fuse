@@ -1,5 +1,10 @@
-#!/usr/bin/python
-
+#!/usr/bin/python2
+# duplicity-fuse.py
+#  mount duplicity backup as a user-space filesystem (fuse)
+#
+# Original written by Peter Gruber, changes to make work with
+# more recent Python versions & Duplicity made by Jose Riha <jose1711 gmail com>
+#
 # Copyright (C) 2008 Peter Gruber <nokos@gmx.net>
 #
 # This file is in part based on code of duplicity by.
@@ -22,17 +27,16 @@
 
 import os, stat, errno, sys, getpass, gzip, time, types
 from duplicity import collections, commandline, diffdir, dup_temp, dup_time, file_naming, globals, gpg, log, manifest, patchdir, path, robust, tempdir
-from cElementTree import Element,SubElement,QName
+from xml.etree.cElementTree import Element, SubElement, QName
 from datetime import datetime
-from getopt import getopt,GetoptError
+from getopt import getopt, GetoptError
 from time import mktime
 import fuse
 from fuse import Fuse
 import string
 
 if not hasattr(fuse, '__version__'):
-    raise RuntimeError, \
-        "your fuse-py doesn't know of fuse.__version__, probably it's too old."
+    raise RuntimeError("your fuse-py doesn't know of fuse.__version__, probably it's too old.")
 
 fuse.fuse_python_api = (0, 2)
 
@@ -82,16 +86,17 @@ class DuplicityFS(Fuse):
                 yield fuse.Direntry(r)
         else:
             p = path[1:].split(os.path.sep)
-            if self.dircache[p[0]]==None:
+            if self.dircache[p[0]] is None:
                 signature_chain = self.col_stats.matched_chain_pair[0]
-                for s in range(1,len(self.dates)+1):
+                for s in range(1, len(self.dates)+1):
                     d = self.dates[s-1]
                     ds = date2str(d)
-                    if ds == p[0]:
+                    if ds in p[0]:
+                        ds = p[0]
                         self.dircache[ds] = getfiletree(ds,signature_chain.get_fileobjs()[0:s])
                         break
             e = findpath(self.dircache[p[0]],p[1:])
-            n = [".",".."]+[x.get("name") for x in e.getchildren()]
+            n = [".", ".."] + [x.get("name") for x in e.getchildren()]
             for r in  n:
                 yield fuse.Direntry(r)
 
@@ -121,11 +126,13 @@ class DuplicityFS(Fuse):
         if e == None:
             return -errno.ENOENT
         if e.get("type") == 'dir':
-            st.st_mode = stat.S_IFDIR | e.get("perm")
+            mode = int('0b' + ''.join([bin(int(x))[2:] for x in e.get("perm").split()[-1]]), base=2)
+            st.st_mode = stat.S_IFDIR | mode
         else:
-            st.st_mode = stat.S_IFREG | e.get("perm")
+            mode = int('0b' + ''.join([bin(int(x))[2:] for x in e.get("perm").split()[-1]]), base=2)
+            st.st_mode = stat.S_IFREG | mode
         if e.get("size")<0: # need to read size from filearch? not in signature?
-            ds = filter(lambda x:date2str(x)==p[0],self.dates)
+            ds = filter(lambda x: date2str(x) in p[0], self.dates)
             files = restore_get_patched_rop_iter(self.col_stats,date2num(ds[0]))
             np = apply(os.path.join,p[1:])
             for x in files:
@@ -170,9 +177,9 @@ class DuplicityFS(Fuse):
         if self.filecache.has_key(path):
             dat = self.filecache[path]
             return dat[offset:(offset+size)]
-        ds = filter(lambda x:date2str(x)==p[0],self.dates)
+        ds = filter(lambda x: date2str(x) in p[0],self.dates)
         self.col_stats = collections.CollectionsStatus(globals.backend,globals.archive_dir).set_values()
-        files = restore_get_patched_rop_iter(self.col_stats,date2num(ds[0]))
+        files = restore_get_patched_rop_iter(self.col_stats, date2num(ds[0]))
         np = apply(os.path.join,p[1:])
         dat = None
         s = 0
@@ -215,26 +222,31 @@ class DuplicityFS(Fuse):
                     opts.append("--%s"%(i))
             except:
                 pass
+        self.options = []
+        log.setup()
+        # uncomment for debugging
+        # log.setverbosity(9)
         commandline.ProcessCommandLine(["list-current-files","--ssh-askpass"]+opts+[self.url])
         globals.gpg_profile.passphrase = get_passphrase(self.passphrasefd)
         self.col_stats = collections.CollectionsStatus(globals.backend,globals.archive_dir).set_values()
-        self.dates = reduce(lambda x,y:x+y,[[datetime.fromtimestamp(b.get_time()) for b in a.get_all_sets()] for a in self.col_stats.all_backup_chains],[])
-        for s in range(1,len(self.dates)+1):
+        self.dates = reduce(lambda x,y: x+y, [[datetime.fromtimestamp(b.get_time()) for b in a.get_all_sets()] for a in self.col_stats.all_backup_chains],[])
+        self.types = reduce(lambda x,y: x+y, [[b.type for b in a.get_all_sets()] for a in self.col_stats.all_backup_chains],[])
+        for s in range(1, len(self.dates)+1):
             signature_chain = self.col_stats.matched_chain_pair[0]
             d = self.dates[s-1]
-            ds = date2str(d)
+            ds = date2str(d) + '_' + self.types[s-1]
             self.dircache[ds] = None
 
-def findpath(root,path):
-    if len(path)==0:
+def findpath(root, path):
+    if len(path) == 0:
         return root
     c = path[0]
     ec = pathencode(c)
     s = root.find(ec)
-    if s == None:
+    if s is None:
         log.Log("node "+c+"("+ec+") in "+str(root)+" not found",5)
         return None
-    if len(path)==1:
+    if len(path) == 1:
         log.Log("node "+c+"("+ec+") in "+str(root)+" found",5)
         return s
     log.Log("search "+path[1]+" in "+c+"("+ec+") in "+str(root),5)
@@ -399,6 +411,9 @@ Userspace duplicity filesystem
     for n in server.no_options:
         server.parser.add_option(mountopt=n.replace("-",""),
                                  help=n+" option from duplicity")
+    # uncomment for debugging
+    # server.fuse_args.setmod('foreground')
+    
     server.parse(values=server, errex=1)
     try:
         if server.fuse_args.mount_expected():
