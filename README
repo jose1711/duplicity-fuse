@@ -1,0 +1,5 @@
+Duplicity-FUSE
+
+Example:
+
+python duplicity-fuse.py -o url=file:///dir/with/duplicity/backup /some/mountpoint
