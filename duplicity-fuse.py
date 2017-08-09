@@ -42,6 +42,8 @@ import fuse
 from fuse import Fuse
 import string
 
+filename_tdp = {}
+
 if not hasattr(fuse, '__version__'):
     raise RuntimeError("your fuse-py doesn't know of fuse.__version__, probably it's too old.")
 
@@ -339,7 +341,12 @@ def restore_get_patched_rop_iter(col_stats, time):
 def restore_get_enc_fileobj(backend, filename, volume_info):
     """Return plaintext fileobj from encrypted filename on backend """
     parseresults = file_naming.parse(filename)
-    tdp = dup_temp.new_tempduppath(parseresults)
+    if filename in filename_tdp:
+        tdp = filename_tdp[filename]
+    else:
+        tdp = dup_temp.new_tempduppath(parseresults)
+        filename_tdp[filename] = tdp
+
     backend.get(filename, tdp)
     if not restore_check_hash(volume_info, tdp):
         return None
@@ -350,6 +357,7 @@ def restore_get_enc_fileobj(backend, filename, volume_info):
 
 def restore_check_hash(volume_info, vol_path):
     """Check the hash of vol_path path against data in volume_info"""
+    global filename_tdp
     hash_pair = volume_info.get_best_hash()
     if hash_pair:
         calculated_hash = gpg.get_hash(hash_pair[0], vol_path)
