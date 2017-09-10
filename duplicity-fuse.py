@@ -77,6 +77,9 @@ class DuplicityStat(fuse.Stat):
 
 
 class DuplicityFS(Fuse):
+    debuglevel = 0
+    foreground = 0
+    filemode = 0
     options = ["file-to-restore", "archive-dir", "encrypt-key", "num-retries",
                "scp-command", "sftp-command", "sign-key", "timeout", "volsize",
                "verbosity", "gpg-options", "ssh-options"]
@@ -92,6 +95,17 @@ class DuplicityFS(Fuse):
     dates = []
     dircache = {}
 
+    def fillcache(self, p):
+        if self.dircache[p] is None:
+            log.Log("filling cache "+p, 5)
+            for s in xrange(0, len(self.date_types)):
+                if date2str(self.date_types[s][0]) in p:
+                    log.Log("filling cache for "+str(s)+" "+p, 5)
+                    t = date2num(self.date_types[s][0])
+                    self.dircache[p] = getfiletree(p, self.col_stats.get_signature_chain_at_time(t).get_fileobjs(t))
+                    break
+        return self.dircache[p]
+
     def readdir(self, path, offset):
         log.Log("readdir "+path, 5)
         if path == '/':
@@ -99,19 +113,11 @@ class DuplicityFS(Fuse):
                 yield fuse.Direntry(r)
         else:
             p = path[1:].split(os.path.sep)
-            if self.dircache[p[0]] is None:
-                signature_chain = self.col_stats.matched_chain_pair[0]
-                for s in range(1, len(self.dates)+1):
-                    d = self.dates[s-1]
-                    ds = date2str(d)
-                    if ds in p[0]:
-                        ds = p[0]
-                        self.dircache[ds] = getfiletree(ds, signature_chain.get_fileobjs()[0:s])
-                        break
-            e = findpath(self.dircache[p[0]], p[1:])
-            n = [".", ".."] + [x.get("name") for x in e.getchildren()]
-            for r in n:
+            e = findpath(self.fillcache(p[0]), p[1:])
+            for r in [".", ".."]:
                 yield fuse.Direntry(r)
+            for x in e.getchildren():
+                yield fuse.Direntry(x.get("name"))
 
     def getattr(self, path):
         log.Log("getattr "+path, 5)
@@ -127,38 +133,35 @@ class DuplicityFS(Fuse):
             st.st_mode = stat.S_IFDIR | 0755
             st.st_nlink = 2
             return st
-        if self.dircache[p[0]] is None:
-            signature_chain = self.col_stats.matched_chain_pair[0]
-            for s in range(1, len(self.dates)+1):
-                d = self.dates[s-1]
-                ds = date2str(d)
-                if ds == p[0]:
-                    self.dircache[ds] = getfiletree(ds, signature_chain.get_fileobjs()[0:s])
-                    break
-        e = findpath(self.dircache[p[0]], p[1:])
+        e = findpath(self.fillcache(p[0]), p[1:])
         if e is None:
             return -errno.ENOENT
         mode = int((3 * '{:b}').format(*[int(x) for x in e.get("perm").split()[-1]]), base=2)
         if e.get("type") == 'dir':
             st.st_mode = stat.S_IFDIR | mode
+            e.set("size", 0)
         else:
             st.st_mode = stat.S_IFREG | mode
-        if e.get("size") < 0:  # need to read size from filearch? not in signature?
-            ds = filter(lambda x: date2str(x) in p[0], self.dates)
-            files = restore_get_patched_rop_iter(self.col_stats, date2num(ds[0]))
-            np = apply(os.path.join, p[1:])
-            for x in files:
-                lp = x.get_relative_path()
-                log.Log("looking at %s,%s"%(lp, np), 5)
+        if int(self.filemode) == 0 and e.get("size") < 0:  # need to read size from filearch? not in signature?
+            ds = [d[0] for d in self.date_types if date2str(d[0]) in p[0]]
+            np = os.path.join(*p[1:])
+            files = restore_get_patched_rop_iter(self.col_stats, date2num(ds[0]), tuple(p[1:]))
+            for x in files[0]:
+                lp = os.path.join(*[y for y in (np+os.path.sep+x.get_relative_path()).split(os.path.sep) if y!='.'])
+                log.Log("looking at %s for %s"%(lp, np), 5)
                 le = findpath(self.dircache[p[0]], lp.split(os.path.sep))
                 if le is None:
-                    log.Log("not found: "+str(le), 5)
+                    log.Log("not found in dircache: "+str(le), 7)
                     continue
                 if le.get("size") < 0:
                     le.set("size", x.getsize())
                 if lp == np:
-                    log.Log("found", 5)
+                    log.Log("found "+np, 5)
                     break
+            for x in files[1]:
+                x.close()
+        elif e.get("size") < 0:
+            e.set("size", 0)
         st.st_size = e.get("size")
         st.st_uid = e.get("uid")
         st.st_gid = e.get("gid")
@@ -189,20 +192,19 @@ class DuplicityFS(Fuse):
         if self.filecache.has_key(path):
             dat = self.filecache[path]
             return dat[offset:(offset+size)]
-        ds = filter(lambda x: date2str(x) in p[0], self.dates)
-        self.col_stats = collections.CollectionsStatus(globals.backend, globals.archive_dir).set_values()
-        files = restore_get_patched_rop_iter(self.col_stats, date2num(ds[0]))
-        np = apply(os.path.join, p[1:])
+        ds = [d[0] for d in self.date_types if date2str(d[0]) in p[0]]
+        files = restore_get_patched_rop_iter(self.col_stats, date2num(ds[0]), tuple(p[1:]))
+        np = os.path.join(*p[1:])
         dat = None
         s = 0
-        while True:
-            try:
-                f = files.next()
-            except StopIteration:
-                break
-            if f.get_relative_path() == np:
+        for f in files[0]:
+            lp = os.path.join(*[y for y in (np+os.path.sep+f.get_relative_path()).split(os.path.sep) if y!='.'])
+            if lp == np:
                 dat = f.get_data()
                 s = f.getsize()
+                break
+        for f in files[1]:
+            f.close()
         if dat is not None:
             offset = min(s-1, offset)
             size = min(s-offset, size)
@@ -213,6 +215,8 @@ class DuplicityFS(Fuse):
     def runduplicity(self):
         if self.url is None:
             return
+        log.setup()
+        log.setverbosity(int(self.debuglevel))
         if self.passphrasefd:
             self.passphrasefd = int(self.passphrasefd)
         if self.passwordfd:
@@ -224,30 +228,30 @@ class DuplicityFS(Fuse):
             try:
                 v = eval("self."+i.replace("-", ""))
                 if v:
-                    opts.append("--%s=%s" % (i, v))
+                    opts.append("--%s=%s"%(i, v))
             except:
                 pass
         for i in self.no_options:
             try:
                 v = eval("self."+i.replace("-", ""))
                 if v:
-                    opts.append("--%s" % (i))
+                    opts.append("--%s"%(i))
             except:
                 pass
         self.options = []
-        log.setup()
-        # uncomment for debugging
-        # log.setverbosity(9)
-        commandline.ProcessCommandLine(["list-current-files", "--ssh-askpass"] + opts + [self.url])
+        parameter = ["list-current-files", "--ssh-askpass"] + opts + [self.url]
+        log.Log("processing %s"%(" ".join(parameter)), 5)
+        sys.argv = ["duplicity"] + parameter
+        action = commandline.ProcessCommandLine(parameter)
+        log.Log("running action %s"%(action), 5)
         globals.gpg_profile.passphrase = get_passphrase(self.passphrasefd)
         self.col_stats = collections.CollectionsStatus(globals.backend, globals.archive_dir).set_values()
-        self.dates = reduce(lambda x, y: x+y, [[datetime.fromtimestamp(b.get_time()) for b in a.get_all_sets()] for a in self.col_stats.all_backup_chains], [])
-        self.types = reduce(lambda x, y: x+y, [[b.type for b in a.get_all_sets()] for a in self.col_stats.all_backup_chains], [])
-        for s in range(1, len(self.dates)+1):
-            signature_chain = self.col_stats.matched_chain_pair[0]
-            d = self.dates[s-1]
-            ds = date2str(d) + '_' + self.types[s-1]
-            self.dircache[ds] = None
+        self.date_types = []
+        for chain in self.col_stats.all_backup_chains:
+            for s in chain.get_all_sets():
+                self.date_types.append((datetime.fromtimestamp(s.get_time()), s.type))
+        for s in self.date_types:
+            self.dircache[date2str(s[0]) + '_' + s[1]] = None
 
 
 def findpath(root, path):
@@ -266,9 +270,9 @@ def findpath(root, path):
     return findpath(s, path[1:])
 
 
-def getfiletree(name, w):
+def getfiletree(name, files):
     root = Element(name)
-    for f in diffdir.get_combined_path_iter(w):
+    for f in diffdir.get_combined_path_iter(files):
         if f.difftype == 'deleted':
             continue
         s = f.stat
@@ -280,7 +284,9 @@ def getfiletree(name, w):
             continue
         if t[0:2] == './':
             t = t[2:]
-        addtotree(root,t.split(os.path.sep),f.getperms(),size,mtime,uid,gid,f.type)
+        addtotree(root, t.split(os.path.sep), f.getperms(), size, mtime, uid, gid, f.type)
+    for path in files:
+        path.close()
     return root
 
 
@@ -317,9 +323,8 @@ def get_backendpassphrase(fd=None):
         return pass1
 
 
-def restore_get_patched_rop_iter(col_stats, time):
+def restore_get_patched_rop_iter(col_stats, time, index=()):
     """Return iterator of patched ROPaths of desired restore data"""
-    index = ()
     backup_chain = col_stats.get_backup_chain_at_time(time)
     assert backup_chain, col_stats.all_backup_chains
     backup_setlist = backup_chain.get_sets_at_time(time)
@@ -333,10 +338,9 @@ def restore_get_patched_rop_iter(col_stats, time):
                                         manifest.volume_info_dict[vol_num])
             if a:
                 yield a
-    fileobj_iters = (get_fileobj_iter(x) for x in backup_setlist)
-    tarfiles = (patchdir.TarFile_FromFileobjs(x) for x in fileobj_iters)
-    log.Log("looking through: "+str(tarfiles),5)
-    return patchdir.tarfiles2rop_iter(tarfiles, index)
+    tarfiles = (patchdir.TarFile_FromFileobjs(x) for x in (get_fileobj_iter(s) for s in backup_setlist))
+    log.Log("looking through: "+str(tarfiles), 5)
+    return (patchdir.tarfiles2rop_iter(tarfiles, index), tarfiles)
 
 def restore_get_enc_fileobj(backend, filename, volume_info):
     """Return plaintext fileobj from encrypted filename on backend """
@@ -364,7 +368,7 @@ def restore_check_hash(volume_info, vol_path):
         if calculated_hash != hash_pair[1]:
             log.Log("Invalid data - %s hash mismatch:\n"
                            "Calculated hash: %s\n" "Manifest hash: %s\n" %
-                           (hash_pair[0], calculated_hash, hash_pair[1]),1)
+                           (hash_pair[0], calculated_hash, hash_pair[1]), 1)
             return False
     return True
 
@@ -380,7 +384,7 @@ def restore_add_sig_check(fileobj):
                            (actual_sig, globals.gpg_profile.sign_key))
     fileobj.addhook(check_signature)
 
-def addtotree(root,path,perm,size,mtime,uid,gid,type):
+def addtotree(root, path, perm, size, mtime, uid, gid, type):
     if len(path) == 1:
         c = path[0]
         ec = pathencode(c)
@@ -390,28 +394,28 @@ def addtotree(root,path,perm,size,mtime,uid,gid,type):
                 e = f
                 break
         if e is None:
-            e = SubElement(root,ec)
-            log.Log("add "+c+"("+ec+") to "+str(root),5)
+            e = SubElement(root, ec)
+            log.Log("add "+c+"("+ec+") to "+str(root), 5)
         else:
-            log.Log("found "+c+"("+ec+") in "+str(root),5)
-        e.set("perm",perm)
-        e.set("size",-1)
-        e.set("mtime",mtime)
-        e.set("uid",uid)
-        e.set("gid",gid)
-        e.set("type",type)
-        e.set("name",c)
+            log.Log("found "+c+"("+ec+") in "+str(root),7)
+        e.set("perm", perm)
+        e.set("size", -1)
+        e.set("mtime", mtime)
+        e.set("uid", uid)
+        e.set("gid", gid)
+        e.set("type", type)
+        e.set("name", c)
     else:
         c = path[0]
         ec = pathencode(c)
         for f in root.getchildren():
             if f.tag == ec:
-                log.Log("adding to "+c+"("+ec+") in "+str(root),5)
-                addtotree(f,path[1:],perm,size,mtime,uid,gid,type)
+                log.Log("adding "+path[1]+" to "+c+"("+ec+") in "+str(root), 7)
+                addtotree(f, path[1:], perm, size, mtime, uid, gid, type)
                 return
-        f = SubElement(root,ec)
-        log.Log("new "+c+"("+ec+") in "+str(root),5)
-        addtotree(f,path[1:],perm,size,mtime,uid,gid,type)
+        f = SubElement(root, ec)
+        log.Log("new "+c+"("+ec+") in "+str(root), 5)
+        addtotree(f, path[1:], perm, size, mtime, uid, gid, type)
 
 def main():
     usage="""
@@ -428,16 +432,23 @@ Userspace duplicity filesystem
                              help="filedescriptor for the password")
     server.parser.add_option(mountopt="passphrasefd", metavar="NUM",
                              help="filedescriptor for the passphrase")
+    server.parser.add_option(mountopt="debuglevel", metavar="NUM",
+                             help="debug level")
+    server.parser.add_option(mountopt="foreground", metavar="NUM",
+                             help="foreground")
+    server.parser.add_option(mountopt="filemode", metavar="NUM", default="0",
+                             help="file mode (0=full, 1=nosizes)")
     for n in server.options:
         server.parser.add_option(mountopt=n.replace("-",""), metavar="STRING",
                                  help=n+" option from duplicity")
     for n in server.no_options:
         server.parser.add_option(mountopt=n.replace("-",""),
                                  help=n+" option from duplicity")
-    # uncomment for debugging
-    # server.fuse_args.setmod('foreground')
-
     server.parse(values=server, errex=1)
+
+    if server.foreground > 0:
+        server.fuse_args.setmod('foreground')
+
     try:
         if server.fuse_args.mount_expected():
             server.runduplicity()
