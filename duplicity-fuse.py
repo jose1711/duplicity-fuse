@@ -266,9 +266,9 @@ def findpath(root, path):
     return findpath(s, path[1:])
 
 
-def getfiletree(name, w):
+def getfiletree(name, files):
     root = Element(name)
-    for f in diffdir.get_combined_path_iter(w):
+    for f in diffdir.get_combined_path_iter(files):
         if f.difftype == 'deleted':
             continue
         s = f.stat
@@ -281,6 +281,8 @@ def getfiletree(name, w):
         if t[0:2] == './':
             t = t[2:]
         addtotree(root,t.split(os.path.sep),f.getperms(),size,mtime,uid,gid,f.type)
+    for path in files:
+        path.close()
     return root
 
 
