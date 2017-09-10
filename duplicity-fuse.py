@@ -79,6 +79,7 @@ class DuplicityStat(fuse.Stat):
 class DuplicityFS(Fuse):
     debuglevel = 0
     foreground = 0
+    filemode = 0
     options = ["file-to-restore", "archive-dir", "encrypt-key", "num-retries",
                "scp-command", "sftp-command", "sign-key", "timeout", "volsize",
                "verbosity", "gpg-options", "ssh-options"]
@@ -138,9 +139,10 @@ class DuplicityFS(Fuse):
         mode = int((3 * '{:b}').format(*[int(x) for x in e.get("perm").split()[-1]]), base=2)
         if e.get("type") == 'dir':
             st.st_mode = stat.S_IFDIR | mode
+            e.set("size", 0)
         else:
             st.st_mode = stat.S_IFREG | mode
-        if e.get("size") < 0:  # need to read size from filearch? not in signature?
+        if int(self.filemode) == 0 and e.get("size") < 0:  # need to read size from filearch? not in signature?
             ds = filter(lambda x: date2str(x) in p[0], self.dates)
             np = apply(os.path.join, p[1:])
             files = restore_get_patched_rop_iter(self.col_stats, date2num(ds[0]), tuple(p[1:]))
@@ -158,6 +160,8 @@ class DuplicityFS(Fuse):
                     break
             for x in files[1]:
                 x.close()
+        elif e.get("size") < 0:
+            e.set("size", 0)
         st.st_size = e.get("size")
         st.st_uid = e.get("uid")
         st.st_gid = e.get("gid")
@@ -433,6 +437,8 @@ Userspace duplicity filesystem
                              help="debug level")
     server.parser.add_option(mountopt="foreground", metavar="NUM",
                              help="foreground")
+    server.parser.add_option(mountopt="filemode", metavar="NUM", default="0",
+                             help="file mode (0=full, 1=nosizes)")
     for n in server.options:
         server.parser.add_option(mountopt=n.replace("-",""), metavar="STRING",
                                  help=n+" option from duplicity")
