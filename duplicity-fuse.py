@@ -77,6 +77,8 @@ class DuplicityStat(fuse.Stat):
 
 
 class DuplicityFS(Fuse):
+    debuglevel = 0
+    foreground = 0
     options = ["file-to-restore", "archive-dir", "encrypt-key", "num-retries",
                "scp-command", "sftp-command", "sign-key", "timeout", "volsize",
                "verbosity", "gpg-options", "ssh-options"]
@@ -213,6 +215,8 @@ class DuplicityFS(Fuse):
     def runduplicity(self):
         if self.url is None:
             return
+        log.setup()
+        log.setverbosity(int(self.debuglevel))
         if self.passphrasefd:
             self.passphrasefd = int(self.passphrasefd)
         if self.passwordfd:
@@ -235,9 +239,6 @@ class DuplicityFS(Fuse):
             except:
                 pass
         self.options = []
-        log.setup()
-        # uncomment for debugging
-        # log.setverbosity(9)
         commandline.ProcessCommandLine(["list-current-files", "--ssh-askpass"] + opts + [self.url])
         globals.gpg_profile.passphrase = get_passphrase(self.passphrasefd)
         self.col_stats = collections.CollectionsStatus(globals.backend, globals.archive_dir).set_values()
@@ -428,16 +429,21 @@ Userspace duplicity filesystem
                              help="filedescriptor for the password")
     server.parser.add_option(mountopt="passphrasefd", metavar="NUM",
                              help="filedescriptor for the passphrase")
+    server.parser.add_option(mountopt="debuglevel", metavar="NUM",
+                             help="debug level")
+    server.parser.add_option(mountopt="foreground", metavar="NUM",
+                             help="foreground")
     for n in server.options:
         server.parser.add_option(mountopt=n.replace("-",""), metavar="STRING",
                                  help=n+" option from duplicity")
     for n in server.no_options:
         server.parser.add_option(mountopt=n.replace("-",""),
                                  help=n+" option from duplicity")
-    # uncomment for debugging
-    # server.fuse_args.setmod('foreground')
-
     server.parse(values=server, errex=1)
+
+    if server.foreground > 0:
+        server.fuse_args.setmod('foreground')
+
     try:
         if server.fuse_args.mount_expected():
             server.runduplicity()
