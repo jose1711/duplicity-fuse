@@ -143,8 +143,8 @@ class DuplicityFS(Fuse):
         else:
             st.st_mode = stat.S_IFREG | mode
         if int(self.filemode) == 0 and e.get("size") < 0:  # need to read size from filearch? not in signature?
-            ds = filter(lambda x: date2str(x) in p[0], self.dates)
-            np = apply(os.path.join, p[1:])
+            ds = [d[0] for d in self.date_types if date2str(d[0]) in p[0]]
+            np = os.path.join(*p[1:])
             files = restore_get_patched_rop_iter(self.col_stats, date2num(ds[0]), tuple(p[1:]))
             for x in files[0]:
                 lp = os.path.join(*[y for y in (np+os.path.sep+x.get_relative_path()).split(os.path.sep) if y!='.'])
@@ -192,7 +192,7 @@ class DuplicityFS(Fuse):
         if self.filecache.has_key(path):
             dat = self.filecache[path]
             return dat[offset:(offset+size)]
-        ds = filter(lambda x: date2str(x) in p[0], self.dates)
+        ds = [d[0] for d in self.date_types if date2str(d[0]) in p[0]]
         files = restore_get_patched_rop_iter(self.col_stats, date2num(ds[0]), tuple(p[1:]))
         np = os.path.join(*p[1:])
         dat = None
@@ -246,13 +246,12 @@ class DuplicityFS(Fuse):
         log.Log("running action %s"%(action), 5)
         globals.gpg_profile.passphrase = get_passphrase(self.passphrasefd)
         self.col_stats = collections.CollectionsStatus(globals.backend, globals.archive_dir).set_values()
-        self.dates = reduce(lambda x, y: x+y, [[datetime.fromtimestamp(b.get_time()) for b in a.get_all_sets()] for a in self.col_stats.all_backup_chains], [])
-        self.types = reduce(lambda x, y: x+y, [[b.type for b in a.get_all_sets()] for a in self.col_stats.all_backup_chains], [])
-        for s in range(1, len(self.dates)+1):
-            signature_chain = self.col_stats.matched_chain_pair[0]
-            d = self.dates[s-1]
-            ds = date2str(d) + '_' + self.types[s-1]
-            self.dircache[ds] = None
+        self.date_types = []
+        for chain in self.col_stats.all_backup_chains:
+            for s in chain.get_all_sets():
+                self.date_types.append((datetime.fromtimestamp(s.get_time()), s.type))
+        for s in self.date_types:
+            self.dircache[date2str(s[0]) + '_' + s[1]] = None
 
 
 def findpath(root, path):
