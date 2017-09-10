@@ -151,12 +151,12 @@ class DuplicityFS(Fuse):
                 log.Log("looking at %s for %s"%(lp, np), 5)
                 le = findpath(self.dircache[p[0]], lp.split(os.path.sep))
                 if le is None:
-                    log.Log("not found: "+str(le), 5)
+                    log.Log("not found in dircache: "+str(le), 7)
                     continue
                 if le.get("size") < 0:
                     le.set("size", x.getsize())
                 if lp == np:
-                    log.Log("found", 5)
+                    log.Log("found "+np, 5)
                     break
             for x in files[1]:
                 x.close()
@@ -228,14 +228,14 @@ class DuplicityFS(Fuse):
             try:
                 v = eval("self."+i.replace("-", ""))
                 if v:
-                    opts.append("--%s=%s" % (i, v))
+                    opts.append("--%s=%s"%(i, v))
             except:
                 pass
         for i in self.no_options:
             try:
                 v = eval("self."+i.replace("-", ""))
                 if v:
-                    opts.append("--%s" % (i))
+                    opts.append("--%s"%(i))
             except:
                 pass
         self.options = []
@@ -284,7 +284,7 @@ def getfiletree(name, files):
             continue
         if t[0:2] == './':
             t = t[2:]
-        addtotree(root,t.split(os.path.sep),f.getperms(),size,mtime,uid,gid,f.type)
+        addtotree(root, t.split(os.path.sep), f.getperms(), size, mtime, uid, gid, f.type)
     for path in files:
         path.close()
     return root
@@ -368,7 +368,7 @@ def restore_check_hash(volume_info, vol_path):
         if calculated_hash != hash_pair[1]:
             log.Log("Invalid data - %s hash mismatch:\n"
                            "Calculated hash: %s\n" "Manifest hash: %s\n" %
-                           (hash_pair[0], calculated_hash, hash_pair[1]),1)
+                           (hash_pair[0], calculated_hash, hash_pair[1]), 1)
             return False
     return True
 
@@ -384,7 +384,7 @@ def restore_add_sig_check(fileobj):
                            (actual_sig, globals.gpg_profile.sign_key))
     fileobj.addhook(check_signature)
 
-def addtotree(root,path,perm,size,mtime,uid,gid,type):
+def addtotree(root, path, perm, size, mtime, uid, gid, type):
     if len(path) == 1:
         c = path[0]
         ec = pathencode(c)
@@ -394,28 +394,28 @@ def addtotree(root,path,perm,size,mtime,uid,gid,type):
                 e = f
                 break
         if e is None:
-            e = SubElement(root,ec)
-            log.Log("add "+c+"("+ec+") to "+str(root),5)
+            e = SubElement(root, ec)
+            log.Log("add "+c+"("+ec+") to "+str(root), 5)
         else:
-            log.Log("found "+c+"("+ec+") in "+str(root),5)
-        e.set("perm",perm)
-        e.set("size",-1)
-        e.set("mtime",mtime)
-        e.set("uid",uid)
-        e.set("gid",gid)
-        e.set("type",type)
-        e.set("name",c)
+            log.Log("found "+c+"("+ec+") in "+str(root),7)
+        e.set("perm", perm)
+        e.set("size", -1)
+        e.set("mtime", mtime)
+        e.set("uid", uid)
+        e.set("gid", gid)
+        e.set("type", type)
+        e.set("name", c)
     else:
         c = path[0]
         ec = pathencode(c)
         for f in root.getchildren():
             if f.tag == ec:
-                log.Log("adding to "+c+"("+ec+") in "+str(root),5)
-                addtotree(f,path[1:],perm,size,mtime,uid,gid,type)
+                log.Log("adding "+path[1]+" to "+c+"("+ec+") in "+str(root), 7)
+                addtotree(f, path[1:], perm, size, mtime, uid, gid, type)
                 return
-        f = SubElement(root,ec)
-        log.Log("new "+c+"("+ec+") in "+str(root),5)
-        addtotree(f,path[1:],perm,size,mtime,uid,gid,type)
+        f = SubElement(root, ec)
+        log.Log("new "+c+"("+ec+") in "+str(root), 5)
+        addtotree(f, path[1:], perm, size, mtime, uid, gid, type)
 
 def main():
     usage="""
