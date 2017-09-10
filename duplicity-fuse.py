@@ -234,7 +234,11 @@ class DuplicityFS(Fuse):
             except:
                 pass
         self.options = []
-        commandline.ProcessCommandLine(["list-current-files", "--ssh-askpass"] + opts + [self.url])
+        parameter = ["list-current-files", "--ssh-askpass"] + opts + [self.url]
+        log.Log("processing %s"%(" ".join(parameter)), 5)
+        sys.argv = ["duplicity"] + parameter
+        action = commandline.ProcessCommandLine(parameter)
+        log.Log("running action %s"%(action), 5)
         globals.gpg_profile.passphrase = get_passphrase(self.passphrasefd)
         self.col_stats = collections.CollectionsStatus(globals.backend, globals.archive_dir).set_values()
         self.dates = reduce(lambda x, y: x+y, [[datetime.fromtimestamp(b.get_time()) for b in a.get_all_sets()] for a in self.col_stats.all_backup_chains], [])
