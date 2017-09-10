@@ -142,11 +142,11 @@ class DuplicityFS(Fuse):
             st.st_mode = stat.S_IFREG | mode
         if e.get("size") < 0:  # need to read size from filearch? not in signature?
             ds = filter(lambda x: date2str(x) in p[0], self.dates)
-            files = restore_get_patched_rop_iter(self.col_stats, date2num(ds[0]))
             np = apply(os.path.join, p[1:])
-            for x in files:
-                lp = x.get_relative_path()
-                log.Log("looking at %s,%s"%(lp, np), 5)
+            files = restore_get_patched_rop_iter(self.col_stats, date2num(ds[0]), tuple(p[1:]))
+            for x in files[0]:
+                lp = os.path.join(*[y for y in (np+os.path.sep+x.get_relative_path()).split(os.path.sep) if y!='.'])
+                log.Log("looking at %s for %s"%(lp, np), 5)
                 le = findpath(self.dircache[p[0]], lp.split(os.path.sep))
                 if le is None:
                     log.Log("not found: "+str(le), 5)
@@ -156,6 +156,8 @@ class DuplicityFS(Fuse):
                 if lp == np:
                     log.Log("found", 5)
                     break
+            for x in files[1]:
+                x.close()
         st.st_size = e.get("size")
         st.st_uid = e.get("uid")
         st.st_gid = e.get("gid")
@@ -187,19 +189,18 @@ class DuplicityFS(Fuse):
             dat = self.filecache[path]
             return dat[offset:(offset+size)]
         ds = filter(lambda x: date2str(x) in p[0], self.dates)
-        self.col_stats = collections.CollectionsStatus(globals.backend, globals.archive_dir).set_values()
-        files = restore_get_patched_rop_iter(self.col_stats, date2num(ds[0]))
-        np = apply(os.path.join, p[1:])
+        files = restore_get_patched_rop_iter(self.col_stats, date2num(ds[0]), tuple(p[1:]))
+        np = os.path.join(*p[1:])
         dat = None
         s = 0
-        while True:
-            try:
-                f = files.next()
-            except StopIteration:
-                break
-            if f.get_relative_path() == np:
+        for f in files[0]:
+            lp = os.path.join(*[y for y in (np+os.path.sep+f.get_relative_path()).split(os.path.sep) if y!='.'])
+            if lp == np:
                 dat = f.get_data()
                 s = f.getsize()
+                break
+        for f in files[1]:
+            f.close()
         if dat is not None:
             offset = min(s-1, offset)
             size = min(s-offset, size)
@@ -319,9 +320,8 @@ def get_backendpassphrase(fd=None):
         return pass1
 
 
-def restore_get_patched_rop_iter(col_stats, time):
+def restore_get_patched_rop_iter(col_stats, time, index=()):
     """Return iterator of patched ROPaths of desired restore data"""
-    index = ()
     backup_chain = col_stats.get_backup_chain_at_time(time)
     assert backup_chain, col_stats.all_backup_chains
     backup_setlist = backup_chain.get_sets_at_time(time)
@@ -335,10 +335,9 @@ def restore_get_patched_rop_iter(col_stats, time):
                                         manifest.volume_info_dict[vol_num])
             if a:
                 yield a
-    fileobj_iters = (get_fileobj_iter(x) for x in backup_setlist)
-    tarfiles = (patchdir.TarFile_FromFileobjs(x) for x in fileobj_iters)
-    log.Log("looking through: "+str(tarfiles),5)
-    return patchdir.tarfiles2rop_iter(tarfiles, index)
+    tarfiles = (patchdir.TarFile_FromFileobjs(x) for x in (get_fileobj_iter(s) for s in backup_setlist))
+    log.Log("looking through: "+str(tarfiles), 5)
+    return (patchdir.tarfiles2rop_iter(tarfiles, index), tarfiles)
 
 def restore_get_enc_fileobj(backend, filename, volume_info):
     """Return plaintext fileobj from encrypted filename on backend """
