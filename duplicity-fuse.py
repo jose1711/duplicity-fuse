@@ -94,6 +94,17 @@ class DuplicityFS(Fuse):
     dates = []
     dircache = {}
 
+    def fillcache(self, p):
+        if self.dircache[p] is None:
+            log.Log("filling cache "+p, 5)
+            for s in xrange(0, len(self.date_types)):
+                if date2str(self.date_types[s][0]) in p:
+                    log.Log("filling cache for "+str(s)+" "+p, 5)
+                    t = date2num(self.date_types[s][0])
+                    self.dircache[p] = getfiletree(p, self.col_stats.get_signature_chain_at_time(t).get_fileobjs(t))
+                    break
+        return self.dircache[p]
+
     def readdir(self, path, offset):
         log.Log("readdir "+path, 5)
         if path == '/':
@@ -101,19 +112,11 @@ class DuplicityFS(Fuse):
                 yield fuse.Direntry(r)
         else:
             p = path[1:].split(os.path.sep)
-            if self.dircache[p[0]] is None:
-                signature_chain = self.col_stats.matched_chain_pair[0]
-                for s in range(1, len(self.dates)+1):
-                    d = self.dates[s-1]
-                    ds = date2str(d)
-                    if ds in p[0]:
-                        ds = p[0]
-                        self.dircache[ds] = getfiletree(ds, signature_chain.get_fileobjs()[0:s])
-                        break
-            e = findpath(self.dircache[p[0]], p[1:])
-            n = [".", ".."] + [x.get("name") for x in e.getchildren()]
-            for r in n:
+            e = findpath(self.fillcache(p[0]), p[1:])
+            for r in [".", ".."]:
                 yield fuse.Direntry(r)
+            for x in e.getchildren():
+                yield fuse.Direntry(x.get("name"))
 
     def getattr(self, path):
         log.Log("getattr "+path, 5)
@@ -129,15 +132,7 @@ class DuplicityFS(Fuse):
             st.st_mode = stat.S_IFDIR | 0755
             st.st_nlink = 2
             return st
-        if self.dircache[p[0]] is None:
-            signature_chain = self.col_stats.matched_chain_pair[0]
-            for s in range(1, len(self.dates)+1):
-                d = self.dates[s-1]
-                ds = date2str(d)
-                if ds == p[0]:
-                    self.dircache[ds] = getfiletree(ds, signature_chain.get_fileobjs()[0:s])
-                    break
-        e = findpath(self.dircache[p[0]], p[1:])
+        e = findpath(self.fillcache(p[0]), p[1:])
         if e is None:
             return -errno.ENOENT
         mode = int((3 * '{:b}').format(*[int(x) for x in e.get("perm").split()[-1]]), base=2)
