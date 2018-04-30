@@ -1,0 +1,4 @@
+*.pyc
+/build/
+/DuplicityFuse.egg-info/
+/dist/
