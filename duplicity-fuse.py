@@ -245,7 +245,7 @@ class DuplicityFS(Fuse):
         action = commandline.ProcessCommandLine(parameter)
         log.Log("running action %s"%(action), 5)
         globals.gpg_profile.passphrase = get_passphrase(self.passphrasefd)
-        self.col_stats = collections.CollectionsStatus(globals.backend, globals.archive_dir).set_values()
+        self.col_stats = collections.CollectionsStatus(globals.backend, globals.archive_dir, "collection-status").set_values()
         self.date_types = []
         for chain in self.col_stats.all_backup_chains:
             for s in chain.get_all_sets():
