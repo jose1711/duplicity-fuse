@@ -124,13 +124,13 @@ class DuplicityFS(Fuse):
         st = DuplicityStat()
         p = path[1:].split(os.path.sep)
         if path == '/':
-            st.st_mode = stat.S_IFDIR | 0755
+            st.st_mode = stat.S_IFDIR | 0o755
             st.st_nlink = 1+len(self.dircache.keys())
             return st
         if len(p) == 1:
             if not self.dircache.has_key(p[0]):
                 return -errno.ENOENT
-            st.st_mode = stat.S_IFDIR | 0755
+            st.st_mode = stat.S_IFDIR | 0o755
             st.st_nlink = 2
             return st
         e = findpath(self.fillcache(p[0]), p[1:])
