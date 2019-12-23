@@ -124,13 +124,13 @@ class DuplicityFS(Fuse):
         st = DuplicityStat()
         p = path[1:].split(os.path.sep)
         if path == '/':
-            st.st_mode = stat.S_IFDIR | 0755
+            st.st_mode = stat.S_IFDIR | 0o755
             st.st_nlink = 1+len(self.dircache.keys())
             return st
         if len(p) == 1:
             if not self.dircache.has_key(p[0]):
                 return -errno.ENOENT
-            st.st_mode = stat.S_IFDIR | 0755
+            st.st_mode = stat.S_IFDIR | 0o755
             st.st_nlink = 2
             return st
         e = findpath(self.fillcache(p[0]), p[1:])
@@ -245,7 +245,7 @@ class DuplicityFS(Fuse):
         action = commandline.ProcessCommandLine(parameter)
         log.Log("running action %s"%(action), 5)
         globals.gpg_profile.passphrase = get_passphrase(self.passphrasefd)
-        self.col_stats = collections.CollectionsStatus(globals.backend, globals.archive_dir).set_values()
+        self.col_stats = collections.CollectionsStatus(globals.backend, globals.archive_dir, "collection-status").set_values()
         self.date_types = []
         for chain in self.col_stats.all_backup_chains:
             for s in chain.get_all_sets():
